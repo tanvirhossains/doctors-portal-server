@@ -26,7 +26,7 @@ function verifyJWT(req, res, next) {
         }
         req.decoded = decoded
         next()
-        console.log(decoded.foo) // bar
+        console.log( "what is the value",decoded.foo) // bar
     });
 
 }
@@ -45,8 +45,6 @@ async function run() {
         const bookingCollection = client.db('doctor_Portal').collection('booking');
         const userCollection = client.db('doctor_Portal').collection('user');
 
-
-
         app.get('/service', async (req, res) => {
             const query = {}
             const cursor = servicesCollection.find(query);
@@ -59,20 +57,35 @@ async function run() {
             res.send(users)
         })
 
-        //making the user as a admin =75(7)
-        app.put('/user/admin/:email',  async (req, res) => {
+        app.get('/admin/:email',async (req, res)=>{
             const email = req.params.email
-            
-            const filter = { email: email }
-            const options = { upsert: true }
-            const updateDoc = {
-                $set: {role: 'Admin'},
+            const user = await userCollection.findOne({email: email})
+            const isAdmin = user.role === 'Admin'
+            res.send({admin: isAdmin})
+        })
+        //making the user as a admin =75(7)
+        app.put('/user/admin/:email', verifyJWT, async (req, res) => {
+            const email = req.params.email
+            const requester = req.decoded.email
+            const requesterAccount = await userCollection.findOne({ email: requester })
+            if (requesterAccount.role === 'Admin') {
+                const filter = { email: email }
+                // const options = { upsert: true }
+                const updateDoc = {
+                    $set: { role: 'Admin' },
+                }
+                const result = await userCollection.updateOne(filter, updateDoc);
+
+                res.send(result)
             }
-            const result = await userCollection.updateOne(filter, updateDoc, options);
-        
-            res.send(result)
+            else {
+                res.status(403).send({ message: 'forbidden' })
+            }
+
             // res.send({ result,  token }) //both are correct
         })
+
+
         app.put('/user/:email', async (req, res) => {
             const email = req.params.email
             const user = req.body
@@ -83,7 +96,7 @@ async function run() {
             }
             const result = await userCollection.updateOne(filter, updateDoc, options);
             var token = jwt.sign({ email: email }, process.env.ACCESS_TOKEN_SECRET, { expiresIn: '1hr' });
-            res.send({result, token} )
+            res.send({ result, token })
             // res.send({ result,  token }) //both are correct
         })
 
