@@ -26,7 +26,7 @@ function verifyJWT(req, res, next) {
         }
         req.decoded = decoded
         next()
-        console.log( "what is the value",decoded.foo) // bar
+        console.log("what is the value", decoded.foo) // bar
     });
 
 }
@@ -44,35 +44,36 @@ async function run() {
         const servicesCollection = client.db('doctor_Portal').collection('service');
         const bookingCollection = client.db('doctor_Portal').collection('booking');
         const userCollection = client.db('doctor_Portal').collection('user');
+        const doctorCollection = client.db('doctor_Portal').collection('doctors');
 
         app.get('/service', async (req, res) => {
             const query = {}
-            const cursor = servicesCollection.find(query);
+            const cursor = servicesCollection.find(query).project({ slots: 0 });
             const services = await cursor.toArray(cursor);
             res.send(services)
         })
 
-        app.get('/user', verifyJWT, async (req, res) => {
+        app.get('/user', async (req, res) => {
             const users = await userCollection.find().toArray()
             res.send(users)
         })
 
-        app.get('/admin/:email',async (req, res)=>{
+        app.get('/admin/:email', async (req, res) => {
             const email = req.params.email
-            const user = await userCollection.findOne({email: email})
-            const isAdmin = user.role === 'Admin'
-            res.send({admin: isAdmin})
+            const user = await userCollection.findOne({ email: email })
+            const isAdmin = user.role === 'admin'
+            res.send({ admin: isAdmin })
         })
         //making the user as a admin =75(7)
         app.put('/user/admin/:email', verifyJWT, async (req, res) => {
             const email = req.params.email
             const requester = req.decoded.email
             const requesterAccount = await userCollection.findOne({ email: requester })
-            if (requesterAccount.role === 'Admin') {
+            if (requesterAccount.role === 'admin') {
                 const filter = { email: email }
                 // const options = { upsert: true }
                 const updateDoc = {
-                    $set: { role: 'Admin' },
+                    $set: { role: 'admin' },
                 }
                 const result = await userCollection.updateOne(filter, updateDoc);
 
@@ -154,6 +155,12 @@ async function run() {
             // const appointment = bookingCollection.find(query)
             // const list = await cursor.toArray()
             // res.send(list)
+        })
+
+        app.post('/doctor', async (req, res) => {
+            const doctor = req.body;
+            const result = await doctorCollection.insertOne(doctor)
+            res.send(result)
         })
 
 
