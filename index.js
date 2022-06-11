@@ -6,6 +6,12 @@ require('dotenv').config()
 const { MongoClient, ServerApiVersion } = require('mongodb');
 var jwt = require('jsonwebtoken');
 const { accepts } = require('express/lib/request');
+const { resetWatchers } = require('nodemon/lib/monitor/watch');
+
+
+var nodemailer = require('nodemailer');
+var sgTransport = require('nodemailer-sendgrid-transport');
+
 
 app.use(cors())
 app.use(express.json())
@@ -17,21 +23,62 @@ function verifyJWT(req, res, next) {
     if (!authHeader) {
         return res.status(401).send({ message: 'UnAuthorized access' })
     }
-
     const token = authHeader.split(' ')[1]
-
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, function (err, decoded) {
         if (err) {
             return res.status(403).send({ message: 'Forbidden access' })
         }
         req.decoded = decoded
         next()
-        console.log("what is the value", decoded.foo) // bar
+        // console.log("what is the value", decoded.foo) // bar
     });
 
 }
 
 
+var emailSenderOption = {
+    auth: {
+        api_key: process.env.EMAIL_SENDER_KEY
+    }
+}
+
+
+const emailClient = nodemailer.createTransport(sgTransport(emailSenderOption));
+
+function sendAppointmentEmail(booking) {
+    const { patient, patientName, treatment, date, slot } = booking
+
+
+
+
+
+
+
+    var email = {
+        from: process.env.EMAIL_SENDER,
+        to: patient,
+        subject: `Your appointment for ${patientName} on ${date} at ${slot} is Confirmed`,
+        text: `Your appointment for ${patientName} on ${date} at ${slot} is Confirmed`, //if for some reason subject don't render for network then text show to the user  
+        html: `
+        <div>
+        <p>Hello ${patientName}</p>
+        <h2>Your appointment for ${treatment} is confirmed </h2>
+        <h3>Our Address</h3>
+        <p> Andor killa bandarban </p>
+        <h3>Bangladesh</h3>
+        </div>
+        `
+    };
+    emailClient.sendMail(email, function (err, info) {
+        if (err) {
+            console.log(err);
+        }
+        else {
+            console.log('Message sent: ', info);
+        }
+    });
+
+}
 
 
 const uri = `mongodb+srv://${process.env.USER_DB}:${process.env.USER_PASSWORD}@cluster0.frwov.mongodb.net/myFirstDatabase?retryWrites=true&w=majority`;
@@ -45,6 +92,20 @@ async function run() {
         const bookingCollection = client.db('doctor_Portal').collection('booking');
         const userCollection = client.db('doctor_Portal').collection('user');
         const doctorCollection = client.db('doctor_Portal').collection('doctors');
+
+
+        const verifyAdmin = async (req, res, next) => {
+            const requester = req.decoded.email;
+            const requesterAccount = await userCollection.findOne({ email: requester });
+            if (requesterAccount.role === 'admin') {
+                next()
+            }
+            else {
+                res.status(403).send({ message: 'forbidden' })
+                console.log(message)
+            }
+
+        }
 
         app.get('/service', async (req, res) => {
             const query = {}
@@ -64,24 +125,30 @@ async function run() {
             const isAdmin = user.role === 'admin'
             res.send({ admin: isAdmin })
         })
-        //making the user as a admin =75(7)
-        app.put('/user/admin/:email', verifyJWT, async (req, res) => {
-            const email = req.params.email
-            const requester = req.decoded.email
-            const requesterAccount = await userCollection.findOne({ email: requester })
-            if (requesterAccount.role === 'admin') {
-                const filter = { email: email }
-                // const options = { upsert: true }
-                const updateDoc = {
-                    $set: { role: 'admin' },
-                }
-                const result = await userCollection.updateOne(filter, updateDoc);
 
-                res.send(result)
+        //making the user as a admin =75(7)
+        app.put('/user/admin/:email', verifyJWT, verifyAdmin, async (req, res) => {
+            const email = req.params.email;
+
+
+            // const requester = req.decoded.email;
+            // const requesterAccount = await userCollection.findOne({ email: requester });
+            // if (requesterAccount.role === 'admin') {
+
+
+            const filter = { email: email }
+            // const options = { upsert: true }
+            const updateDoc = {
+                $set: { role: 'admin' },
             }
-            else {
-                res.status(403).send({ message: 'forbidden' })
-            }
+            const result = await userCollection.updateOne(filter, updateDoc);
+            res.send(result)
+            // }
+            // else {
+            //     res.status(403).send({ message: 'forbidden' })
+            //     console.log(message)
+            // }
+
 
             // res.send({ result,  token }) //both are correct
         })
@@ -157,12 +224,23 @@ async function run() {
             // res.send(list)
         })
 
-        app.post('/doctor', async (req, res) => {
+        app.get('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
+            const doctors = await doctorCollection.find().toArray()
+            res.send(doctors)
+        })
+        app.post('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
             const doctor = req.body;
             const result = await doctorCollection.insertOne(doctor)
             res.send(result)
         })
 
+
+        app.delete('/doctor/:email', async (req, res) => {
+            const email = req.params.email;
+            const filter = { email: email };
+            const result = await doctorCollection.deleteOne(filter);
+            res.send(result);
+        })
 
         app.post('/booking', async (req, res) => {
             const booking = req.body;
@@ -172,8 +250,9 @@ async function run() {
                 return res.send({ success: false, booking: exist })
             }
             const result = await bookingCollection.insertOne(booking)
+            console.log(`Sending Email`)
+            sendAppointmentEmail(booking)
             res.send({ success: true, result })
-
         })
     }
     finally {
