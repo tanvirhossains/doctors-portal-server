@@ -3,20 +3,22 @@ const app = express()
 const port = process.env.PORT || 5000
 const cors = require('cors');
 require('dotenv').config()
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 var jwt = require('jsonwebtoken');
-const { accepts } = require('express/lib/request');
-const { resetWatchers } = require('nodemon/lib/monitor/watch');
+// const { accepts } = require('express/lib/request');
+// const { resetWatchers } = require('nodemon/lib/monitor/watch');
 
-
-var nodemailer = require('nodemailer');
 var sgTransport = require('nodemailer-sendgrid-transport');
+var nodemailer = require('nodemailer');
+const { restart } = require('nodemon');
 
+
+const stripe = require("stripe")(process.env.EMAIL_SECRET_KEY);
+
+// const { calculateObjectSize } = require('bson')
 
 app.use(cors())
 app.use(express.json())
-
-
 
 function verifyJWT(req, res, next) {
     const authHeader = req.headers.authorization
@@ -32,9 +34,7 @@ function verifyJWT(req, res, next) {
         next()
         // console.log("what is the value", decoded.foo) // bar
     });
-
 }
-
 
 var emailSenderOption = {
     auth: {
@@ -42,18 +42,10 @@ var emailSenderOption = {
     }
 }
 
-
 const emailClient = nodemailer.createTransport(sgTransport(emailSenderOption));
 
 function sendAppointmentEmail(booking) {
     const { patient, patientName, treatment, date, slot } = booking
-
-
-
-
-
-
-
     var email = {
         from: process.env.EMAIL_SENDER,
         to: patient,
@@ -77,7 +69,33 @@ function sendAppointmentEmail(booking) {
             console.log('Message sent: ', info);
         }
     });
-
+}
+function sendPaymentConfirmationEmail(booking) {
+    const { patient, patientName, treatment, date, slot } = booking
+    var email = {
+        from: process.env.EMAIL_SENDER,
+        to: patient,
+        subject: `We have received your payment for  ${patientName} is on ${date} at ${slot} is Confirmed`,
+        text: `Your payment for this appointment  ${patientName}  is on ${date} at ${slot} is Confirmed`, //if for some reason subject don't render for network then text show to the user  
+        html: `
+        <div>
+        <p>Hello ${patientName}</p>
+        <h2>Your appointment for ${treatment} is confirmed </h2>
+        <h2>We have received your payment </h2>
+        <h3>Looking forward to seeing you on ${date} at ${slot}. </h3>
+        <p> Andor killa bandarban </p>
+        <h3>Bangladesh</h3>
+        </div>
+        `
+    };
+    emailClient.sendMail(email, function (err, info) {
+        if (err) {
+            console.log(err);
+        }
+        else {
+            console.log('Message sent: ', info);
+        }
+    });
 }
 
 
@@ -92,7 +110,7 @@ async function run() {
         const bookingCollection = client.db('doctor_Portal').collection('booking');
         const userCollection = client.db('doctor_Portal').collection('user');
         const doctorCollection = client.db('doctor_Portal').collection('doctors');
-
+        const paymentCollection = client.db('doctor_Portal').collection('payments');
 
         const verifyAdmin = async (req, res, next) => {
             const requester = req.decoded.email;
@@ -107,6 +125,18 @@ async function run() {
 
         }
 
+        app.post('/create-payment-intent', verifyJWT, async (req, res) => {
+            const service = req.body;
+            const price = service.price;
+            const amount = price * 100;
+            const paymentIntent = await stripe.paymentIntents.create({
+                amount: amount,
+                currency: 'usd',
+                payment_method_types: ['card']
+            })
+            res.send({ clientSecret: paymentIntent.client_secret })
+        });
+
         app.get('/service', async (req, res) => {
             const query = {}
             const cursor = servicesCollection.find(query).project({ slots: 0 });
@@ -118,13 +148,13 @@ async function run() {
             const users = await userCollection.find().toArray()
             res.send(users)
         })
-
         app.get('/admin/:email', async (req, res) => {
             const email = req.params.email
             const user = await userCollection.findOne({ email: email })
             const isAdmin = user.role === 'admin'
             res.send({ admin: isAdmin })
         })
+
 
         //making the user as a admin =75(7)
         app.put('/user/admin/:email', verifyJWT, verifyAdmin, async (req, res) => {
@@ -211,6 +241,8 @@ async function run() {
         *app.delete('/booking/:id) //
         */
 
+
+        //booking 
         app.get('/booking', verifyJWT, async (req, res) => {
             const patient = req.query.patient
             const query = { patient: patient }
@@ -224,6 +256,30 @@ async function run() {
             // res.send(list)
         })
 
+        app.get('/booking/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: ObjectId(id) }
+            const result = await bookingCollection.findOne(query)
+            res.send(result)
+        })
+
+        app.patch('/booking/:id', verifyJWT, async (req, res) => {
+            const id = req.params.id;
+            const payment = req.body;
+            const filter = { _id: ObjectId(id) };
+            const updatedDoc = {
+                $set: {
+                    paid: true,
+                    transactionId: payment.transactionId,
+                }
+            }
+            const result = await paymentCollection.insertOne(payment);
+            const updatedBooking = await bookingCollection.updateOne(filter, updatedDoc)
+            res.send(updatedBooking , result)
+        })
+
+
+        //doctors collection
         app.get('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
             const doctors = await doctorCollection.find().toArray()
             res.send(doctors)
