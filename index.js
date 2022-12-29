@@ -41,6 +41,7 @@ var emailSenderOption = {
         api_key: process.env.EMAIL_SENDER_KEY
     }
 }
+// added to the server after long time
 
 const emailClient = nodemailer.createTransport(sgTransport(emailSenderOption));
 
